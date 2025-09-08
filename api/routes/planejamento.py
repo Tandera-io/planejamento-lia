@@ -1154,7 +1154,7 @@ def generate_with_claude(prompt: str, max_tokens: int = 4000) -> str:
         client = anthropic.Anthropic(api_key=api_key)
         
         response = client.messages.create(
-            model="claude-3-sonnet-20240229",
+            model="claude-3-haiku-20240307",
             max_tokens=max_tokens,
             temperature=0.3,
             messages=[{"role": "user", "content": prompt}]

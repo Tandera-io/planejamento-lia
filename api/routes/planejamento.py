@@ -1386,7 +1386,7 @@ Retorne o plano melhorado mantendo toda a estrutura e seções.
         return consolidated_content
 
 
-@router.post("/{planejamento_id}/plano/gerar")
+@router.post("/{planejamento_id}/plano/gerar-multi-agent")
 async def gerar_plano_multi_agent(planejamento_id: str):
     """Gera plano estratégico completo usando sistema multi-agent com 24 seções especializadas"""
     try:

@@ -1430,11 +1430,18 @@ async def gerar_plano_multi_agent(planejamento_id: str):
             'status': 'Concluído'
         }
         
-        # Ajuste: status global limitado aos valores aceitos no Supabase (ex.: 'draft' e 'concluido')
-        supabase.table('planejamentos').update({
-            'conteudo': conteudo,
-            'status': 'concluido'
-        }).eq('id', planejamento_id).execute()
+        # Update resiliente do Supabase
+        try:
+            supabase.table('planejamentos').update({
+                'conteudo': conteudo,
+                'status': 'concluido'
+            }).eq('id', planejamento_id).execute()
+        except Exception as update_error:
+            print(f"Erro ao atualizar plano final no Supabase: {update_error}")
+            try:
+                supabase.table('planejamentos').update({'conteudo': conteudo}).eq('id', planejamento_id).execute()
+            except Exception as update_error_2:
+                print(f"Update mínimo também falhou: {update_error_2}")
         
         return {
             "message": "Plano estratégico gerado com sucesso",
@@ -1444,23 +1451,30 @@ async def gerar_plano_multi_agent(planejamento_id: str):
         }
         
     except Exception as e:
+        # Evita 500: salva erro e retorna payload informativo
         try:
             supabase = get_supabase_client()
             result = supabase.table('planejamentos').select('conteudo').eq('id', planejamento_id).single().execute()
             conteudo = result.data.get('conteudo', {}) if result.data else {}
-            
+
             if 'plano' not in conteudo:
                 conteudo['plano'] = {}
-            
+
             conteudo['plano']['status'] = 'error'
             conteudo['plano']['error'] = str(e)
             conteudo['plano']['error_at'] = dt.datetime.now().isoformat()
-            
-            supabase.table('planejamentos').update({'conteudo': conteudo}).eq('id', planejamento_id).execute()
-        except:
-            pass
-        
-        raise HTTPException(status_code=500, detail=str(e))
+
+            try:
+                supabase.table('planejamentos').update({'conteudo': conteudo}).eq('id', planejamento_id).execute()
+            except Exception as update_error:
+                print(f"Falha ao salvar erro no Supabase: {update_error}")
+        except Exception as outer:
+            print(f"Erro no handler de exceção: {outer}")
+
+        return {
+            "message": "Geração finalizada com erro parcial. Verifique o conteúdo salvo.",
+            "status": "error"
+        }
 
 
 @router.get("/{planejamento_id}/plano/progress")

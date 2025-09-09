@@ -211,8 +211,6 @@ async def prepare_preplanejamento(planejamento_id: str, payload: PrepareRequest)
         }
         
         try:
-            from services.openai_service import gpt_4_completion
-            
             prompt_contexto = ""
             
             if reunioes_data:
@@ -247,7 +245,7 @@ Gere um resumo que inclua:
 Formato: Texto corrido, máximo 500 palavras, em português brasileiro.
 """
             
-            resumo_ia = gpt_4_completion(prompt, max_tokens=1000)
+            resumo_ia = generate_ai_completion(prompt, max_tokens=1000)
             
             prompt_bullets = f"""
 Com base no contexto e resumo:
@@ -261,7 +259,7 @@ Extraia os 5-8 pontos mais importantes em formato de bullet points para o planej
 Formato: Lista simples, um ponto por linha, começando com "•"
 """
             
-            bullets_ia = gpt_4_completion(prompt_bullets, max_tokens=500)
+            bullets_ia = generate_ai_completion(prompt_bullets, max_tokens=500)
             bullets_list = [line.strip().replace("•", "").strip() for line in bullets_ia.split("\n") if line.strip() and not line.strip().startswith("•")]
             
         except Exception as e:
@@ -288,7 +286,7 @@ Formato: Lista simples, um ponto por linha, começando com "•"
         
         supabase.table('planejamentos').update({
             'conteudo': conteudo_atual,
-            'status': 'preparing'
+            'status': 'draft'
         }).eq('id', planejamento_id).execute()
         
         return {"data": preplan_data, "message": "Pré-planejamento preparado com sucesso"}
@@ -327,8 +325,6 @@ async def gerar_perguntas(planejamento_id: str, payload: GerarPerguntasRequest):
         preplan = conteudo.get('preplanejamento', {})
         
         try:
-            from services.openai_service import gpt_4_completion
-            
             contexto = preplan.get('resumo_geral', '')
             bullets = preplan.get('bulletpoints', [])
             
@@ -349,7 +345,7 @@ As perguntas devem ser:
 Formato: Uma pergunta por linha, numeradas de 1 a {payload.num_perguntas}.
 """
             
-            perguntas_ia = gpt_4_completion(prompt, max_tokens=800)
+            perguntas_ia = generate_ai_completion(prompt, max_tokens=800)
             perguntas_list = []
             
             for line in perguntas_ia.split('\n'):
@@ -410,8 +406,6 @@ async def get_frameworks_sugeridos(planejamento_id: str):
         preplan = conteudo.get('preplanejamento', {})
         
         try:
-            from services.openai_service import gpt_4_completion
-            
             contexto = preplan.get('resumo_geral', '')
             bullets = preplan.get('bulletpoints', [])
             
@@ -440,7 +434,7 @@ Formato JSON:
 ]
 """
             
-            frameworks_ia = gpt_4_completion(prompt, max_tokens=1200)
+            frameworks_ia = generate_ai_completion(prompt, max_tokens=1200)
             
             try:
                 frameworks_list = json.loads(frameworks_ia)
@@ -499,8 +493,9 @@ async def processar_respostas(planejamento_id: str, payload: ProcessAnswersReque
             }
             supabase.table('planejamento_respostas').insert(resposta_obj).execute()
         
+        # Mantém status permitido pela constraint atual
         supabase.table('planejamentos').update({
-            'status': 'questions_answered'
+            'status': 'draft'
         }).eq('id', planejamento_id).execute()
         
         return {"message": f"{len(payload.respostas)} respostas processadas com sucesso"}
@@ -587,8 +582,6 @@ async def refinar_preplanejamento(planejamento_id: str, message: str = Body(...,
         preplan = conteudo.get('preplanejamento', {})
         
         try:
-            from services.openai_service import gpt_4_completion
-            
             resumo_atual = preplan.get('resumo_geral', '')
             bullets_atuais = preplan.get('bulletpoints', [])
             
@@ -609,7 +602,7 @@ Retorne em formato JSON:
 }}
 """
             
-            refinamento_ia = gpt_4_completion(prompt, max_tokens=1500)
+            refinamento_ia = generate_ai_completion(prompt, max_tokens=1500)
             
             try:
                 refinamento_data = json.loads(refinamento_ia)
@@ -1188,41 +1181,18 @@ def generate_with_gemini(prompt: str, max_tokens: int = 4000) -> str:
 
 
 def get_ai_client_for_planning():
-    """Retorna o cliente de IA configurado para planejamento"""
-    provider = os.getenv("PLANNING_MODEL_PROVIDER", "anthropic").lower()
-    
-    if provider == "anthropic":
-        return "anthropic"
-    elif provider == "google":
-        return "google"
-    else:
-        return "openai"
+    """Retorna o cliente de IA configurado para planejamento.
+    Forçamos Anthropic conforme requisito do projeto."""
+    return "anthropic"
 
 
 def generate_ai_completion(prompt: str, max_tokens: int = 4000) -> str:
-    """Gera conteúdo usando o provedor de IA configurado"""
-    provider = get_ai_client_for_planning()
-    
+    """Gera conteúdo usando apenas Anthropic (sem fallback)."""
     try:
-        if provider == "anthropic":
-            return generate_with_claude(prompt, max_tokens)
-        elif provider == "google":
-            return generate_with_gemini(prompt, max_tokens)
-        else:
-            from services.openai_service import gpt_4_completion
-            return gpt_4_completion(prompt, max_tokens)
-            
+        return generate_with_claude(prompt, max_tokens)
     except Exception as e:
-        print(f"Erro na geração de IA ({provider}): {e}")
-        if provider != "openai":
-            try:
-                from services.openai_service import gpt_4_completion
-                return gpt_4_completion(prompt, max_tokens)
-            except Exception as fallback_error:
-                print(f"Erro no fallback OpenAI: {fallback_error}")
-                raise
-        else:
-            raise
+        print(f"Erro na geração de IA (anthropic): {e}")
+        raise
 
 
 PLANNING_SECTIONS = [
@@ -1438,7 +1408,17 @@ async def gerar_plano_multi_agent(planejamento_id: str):
                 }
         
         print("Consolidando seções...")
-        consolidated_plan = consolidate_sections(generated_sections, preplan)
+        try:
+            consolidated_plan = consolidate_sections(generated_sections, preplan)
+        except Exception as consolidation_error:
+            # Fallback: consolidação básica sem IA para evitar 500 e garantir persistência
+            print(f"Erro na consolidação via IA: {consolidation_error}")
+            consolidated_parts = []
+            for s_name in PLANNING_SECTIONS:
+                if s_name in generated_sections:
+                    s_content = generated_sections[s_name].get('content', '')
+                    consolidated_parts.append(f"## {s_name.replace('_', ' ').title()}\n\n{s_content}")
+            consolidated_plan = "\n\n".join(consolidated_parts)
         
         conteudo['plano']['consolidated_content'] = consolidated_plan
         conteudo['plano']['status'] = 'completed'
@@ -1450,9 +1430,10 @@ async def gerar_plano_multi_agent(planejamento_id: str):
             'status': 'Concluído'
         }
         
+        # Ajuste: status global limitado aos valores aceitos no Supabase (ex.: 'draft' e 'concluido')
         supabase.table('planejamentos').update({
             'conteudo': conteudo,
-            'status': 'plan_generated'
+            'status': 'concluido'
         }).eq('id', planejamento_id).execute()
         
         return {
@@ -1498,6 +1479,7 @@ async def get_generation_progress(planejamento_id: str):
         
         return {
             "data": progress,
+            "progress": progress,  # compat com front que espera progress.status
             "status": plano.get('status', 'not_started'),
             "sections_completed": progress.get('completed_sections', 0),
             "total_sections": progress.get('total_sections', len(PLANNING_SECTIONS))

@@ -1377,7 +1377,7 @@ Melhore o plano:
 Retorne o plano melhorado mantendo toda a estrutura e seções.
 """
         
-        improved_plan = generate_ai_completion(consolidation_prompt, max_tokens=8000)
+        improved_plan = generate_ai_completion(consolidation_prompt, max_tokens=4000)
         
         return improved_plan
         

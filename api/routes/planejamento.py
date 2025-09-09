@@ -1430,18 +1430,11 @@ async def gerar_plano_multi_agent(planejamento_id: str):
             'status': 'Concluído'
         }
         
-        # Update resiliente do Supabase
+        # Persistência: atualizar apenas o conteudo (evita violar CHECK do status)
         try:
-            supabase.table('planejamentos').update({
-                'conteudo': conteudo,
-                'status': 'concluido'
-            }).eq('id', planejamento_id).execute()
-        except Exception as update_error:
-            print(f"Erro ao atualizar plano final no Supabase: {update_error}")
-            try:
-                supabase.table('planejamentos').update({'conteudo': conteudo}).eq('id', planejamento_id).execute()
-            except Exception as update_error_2:
-                print(f"Update mínimo também falhou: {update_error_2}")
+            supabase.table('planejamentos').update({'conteudo': conteudo}).eq('id', planejamento_id).execute()
+        except Exception as update_error_2:
+            print(f"Falha ao salvar conteúdo do plano no Supabase: {update_error_2}")
         
         return {
             "message": "Plano estratégico gerado com sucesso",
@@ -1516,11 +1509,29 @@ async def get_planning_sections(planejamento_id: str):
         conteudo = result.data.get('conteudo', {})
         plano = conteudo.get('plano', {})
         sections = plano.get('sections', {})
-        
+
+        # Aliases para compatibilidade com o front (mesmo conteúdo, chaves esperadas)
+        alias_map = {
+            "objetivo_principal_roi": "objetivo_roi",
+            "deliverables_marcos": "deliverables",
+            "investimento_timeline": "timeline_resultados",
+            "impacto_no_negocio": "impacto_negocio",
+            "selecao_de_frameworks": "frameworks",
+            "complementaridade": "metodologia",
+            "adaptacoes": "riscos_mitigacao",
+            "aplicacao_pratica": "deliverables",
+            "integracao": "metodologia",
+            "sequenciamento": "timeline_resultados"
+        }
+        aliased_sections = dict(sections)
+        for alias_key, source_key in alias_map.items():
+            if source_key in sections and alias_key not in aliased_sections:
+                aliased_sections[alias_key] = sections[source_key]
+
         return {
-            "data": sections,
+            "data": aliased_sections,
             "consolidated_content": plano.get('consolidated_content', ''),
-            "total_sections": len(sections)
+            "total_sections": len(aliased_sections)
         }
         
     except Exception as e:
